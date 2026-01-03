@@ -1,0 +1,15 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Rust build artifacts
+addons/juno_leaderboard/rust/target/
+addons/juno_leaderboard/rust/Cargo.lock
+
+# Compiled native libraries
+addons/juno_leaderboard/bin/*.so
+addons/juno_leaderboard/bin/*.dll
+addons/juno_leaderboard/bin/*.dylib
+
+# macOS
+.DS_Store

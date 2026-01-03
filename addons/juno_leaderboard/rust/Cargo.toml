@@ -1,0 +1,27 @@
+[package]
+name = "juno_leaderboard"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+godot = { git = "https://github.com/godot-rust/gdext", branch = "master" }
+ic-agent = "0.37"
+candid = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_bytes = "0.11"
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+anyhow = "1.0"
+once_cell = "1.19"
+base64 = "0.22"
+sha2 = "0.10"
+hex = "0.4"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true

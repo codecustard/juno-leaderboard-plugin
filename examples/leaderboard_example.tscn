@@ -1,0 +1,107 @@
+[gd_scene format=3 uid="uid://ce8ao3lp8qc4h"]
+
+[ext_resource type="Script" uid="uid://dpgq5ldmnuien" path="res://examples/leaderboard_example.gd" id="1"]
+
+[node name="LeaderboardExample" type="Control" unique_id=975594446]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1")
+
+[node name="VBoxContainer" type="VBoxContainer" parent="." unique_id=57472545]
+layout_mode = 1
+anchors_preset = 8
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -300.0
+offset_top = -250.0
+offset_right = 300.0
+offset_bottom = 250.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="Title" type="Label" parent="VBoxContainer" unique_id=1292087611]
+layout_mode = 2
+theme_type_variation = &"HeaderLarge"
+text = "Juno Leaderboard Example"
+horizontal_alignment = 1
+
+[node name="HSeparator" type="HSeparator" parent="VBoxContainer" unique_id=4499775]
+layout_mode = 2
+
+[node name="AuthSection" type="VBoxContainer" parent="VBoxContainer" unique_id=1568907506]
+layout_mode = 2
+
+[node name="AuthLabel" type="Label" parent="VBoxContainer/AuthSection" unique_id=508577040]
+layout_mode = 2
+text = "Authentication"
+horizontal_alignment = 1
+
+[node name="LoginButton" type="Button" parent="VBoxContainer/AuthSection" unique_id=214585427]
+layout_mode = 2
+text = "Login with Internet Identity"
+
+[node name="HSeparator2" type="HSeparator" parent="VBoxContainer" unique_id=371011764]
+layout_mode = 2
+
+[node name="InputSection" type="VBoxContainer" parent="VBoxContainer" unique_id=683130054]
+layout_mode = 2
+
+[node name="InputLabel" type="Label" parent="VBoxContainer/InputSection" unique_id=2119297571]
+layout_mode = 2
+text = "Submit Score"
+horizontal_alignment = 1
+
+[node name="PlayerNameLabel" type="Label" parent="VBoxContainer/InputSection" unique_id=246448504]
+layout_mode = 2
+text = "Player Name:"
+
+[node name="PlayerNameInput" type="LineEdit" parent="VBoxContainer/InputSection" unique_id=1279306594]
+layout_mode = 2
+placeholder_text = "Enter your name"
+
+[node name="ScoreLabel" type="Label" parent="VBoxContainer/InputSection" unique_id=503330186]
+layout_mode = 2
+text = "Score:"
+
+[node name="ScoreInput" type="SpinBox" parent="VBoxContainer/InputSection" unique_id=1500649444]
+layout_mode = 2
+max_value = 999999.0
+value = 100.0
+
+[node name="SubmitButton" type="Button" parent="VBoxContainer/InputSection" unique_id=920720390]
+layout_mode = 2
+text = "Submit Score"
+
+[node name="HSeparator3" type="HSeparator" parent="VBoxContainer" unique_id=1027510224]
+layout_mode = 2
+
+[node name="LeaderboardSection" type="VBoxContainer" parent="VBoxContainer" unique_id=1607434288]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="LeaderboardLabel" type="Label" parent="VBoxContainer/LeaderboardSection" unique_id=1885672183]
+layout_mode = 2
+text = "Leaderboard"
+horizontal_alignment = 1
+
+[node name="FetchButton" type="Button" parent="VBoxContainer/LeaderboardSection" unique_id=1054050690]
+layout_mode = 2
+text = "Refresh Leaderboard"
+
+[node name="LeaderboardList" type="ItemList" parent="VBoxContainer/LeaderboardSection" unique_id=748291185]
+layout_mode = 2
+size_flags_vertical = 3
+
+[node name="HSeparator4" type="HSeparator" parent="VBoxContainer" unique_id=893925210]
+layout_mode = 2
+
+[node name="StatusLabel" type="Label" parent="VBoxContainer" unique_id=1859349680]
+layout_mode = 2
+text = "Ready"
+horizontal_alignment = 1

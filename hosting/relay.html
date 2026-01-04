@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Juno Leaderboard - Internet Identity Authentication</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            margin: 0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            text-align: center;
+            padding: 2rem;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+            max-width: 500px;
+        }
+        h1 {
+            margin-bottom: 1rem;
+            font-size: 2rem;
+        }
+        p {
+            margin-bottom: 2rem;
+            opacity: 0.9;
+            line-height: 1.6;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid white;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        .error {
+            background: rgba(255, 59, 48, 0.2);
+            padding: 1rem;
+            border-radius: 10px;
+            margin-top: 1rem;
+        }
+        button {
+            background: white;
+            color: #667eea;
+            border: none;
+            padding: 12px 30px;
+            font-size: 16px;
+            border-radius: 25px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+        }
+        button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Internet Identity Login</h1>
+        <p id="status">Initializing authentication...</p>
+        <div class="spinner" id="spinner"></div>
+        <div id="error" class="error" style="display: none;"></div>
+        <button id="loginBtn" style="display: none;">Authenticate with Internet Identity</button>
+    </div>
+
+    <script src="bundle.js"></script>
+    <script>
+        const statusEl = document.getElementById('status');
+        const spinnerEl = document.getElementById('spinner');
+        const errorEl = document.getElementById('error');
+        const loginBtn = document.getElementById('loginBtn');
+
+        function showError(message) {
+            errorEl.textContent = message;
+            errorEl.style.display = 'block';
+            spinnerEl.style.display = 'none';
+            statusEl.textContent = 'Authentication failed';
+        }
+
+        function updateStatus(message) {
+            statusEl.textContent = message;
+        }
+
+        async function authenticate() {
+            try {
+                // Get URL parameters
+                const params = new URLSearchParams(window.location.search);
+                const sessionPublicKey = params.get('sessionPublicKey');
+                const callbackUrl = params.get('callbackUrl');
+
+                if (!sessionPublicKey) {
+                    throw new Error('Missing sessionPublicKey parameter');
+                }
+
+                if (!callbackUrl) {
+                    throw new Error('Missing callbackUrl parameter');
+                }
+
+                updateStatus('Initializing Internet Identity client...');
+
+                // Create auth client
+                const authClient = await window.AuthClient.create();
+
+                updateStatus('Please authenticate with Internet Identity');
+                spinnerEl.style.display = 'none';
+                loginBtn.style.display = 'block';
+
+                // Authenticate when button clicked
+                loginBtn.onclick = async () => {
+                    try {
+                        loginBtn.disabled = true;
+                        loginBtn.textContent = 'Authenticating...';
+                        updateStatus('Redirecting to Internet Identity...');
+
+                        await authClient.login({
+                            identityProvider: 'https://identity.ic0.app',
+                            onSuccess: async () => {
+                                updateStatus('Getting delegation...');
+
+                                const identity = authClient.getIdentity();
+                                const delegation = identity.getDelegation();
+
+                                // Encode delegation as base64 for URL
+                                const delegationJson = JSON.stringify(delegation.toJSON());
+                                const delegationBase64 = btoa(delegationJson);
+
+                                // Redirect to callback with delegation
+                                updateStatus('Authentication successful! Redirecting...');
+                                window.location.href = `${callbackUrl}?delegation=${encodeURIComponent(delegationBase64)}`;
+                            },
+                            onError: (error) => {
+                                console.error('II login error:', error);
+                                showError(`Authentication failed: ${error}`);
+                                loginBtn.disabled = false;
+                                loginBtn.textContent = 'Retry Authentication';
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Login error:', error);
+                        showError(`Error: ${error.message}`);
+                        loginBtn.disabled = false;
+                        loginBtn.textContent = 'Retry Authentication';
+                    }
+                };
+
+            } catch (error) {
+                console.error('Authentication error:', error);
+                showError(`Error: ${error.message}`);
+            }
+        }
+
+        // Start authentication flow
+        authenticate();
+    </script>
+</body>
+</html>

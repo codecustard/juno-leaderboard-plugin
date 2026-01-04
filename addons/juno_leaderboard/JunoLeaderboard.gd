@@ -44,6 +44,9 @@ var _juno_native: Node = null
 var _satellite_id: String = ""
 var _collection_name: String = "highscores"
 
+# Authentication state
+var _waiting_for_delegation: bool = false
+
 
 func _ready() -> void:
 	# Create the native JunoLeaderboard node
@@ -80,8 +83,9 @@ func initialize(satellite_id: String, collection_name: String = "highscores") ->
 
 
 ## Open browser for Internet Identity authentication
-## Required before submitting scores. After login completes in browser,
-## call set_delegation() with the delegation string.
+## Automatically captures delegation via localhost HTTP callback.
+## Emits login_completed(true) signal when authentication succeeds.
+## Required for submitting scores with Write: Managed permissions.
 func login() -> void:
 	if _juno_native:
 		_juno_native.login()
@@ -158,8 +162,19 @@ func get_collection_name() -> String:
 	return _collection_name
 
 
+func _process(_delta: float) -> void:
+	# Poll for delegation after login
+	if _waiting_for_delegation and _juno_native:
+		var delegation = _juno_native.poll_delegation()
+		if delegation != "":
+			_waiting_for_delegation = false
+			# Delegation is automatically set by poll_delegation()
+			# login_completed signal will be emitted by set_delegation()
+
+
 # Signal handlers
 func _on_login_initiated() -> void:
+	_waiting_for_delegation = true
 	login_initiated.emit()
 
 

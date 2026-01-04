@@ -1,0 +1,7 @@
+{
+  "satellite": {
+    "id": "YOUR_SATELLITE_ID_HERE",
+    "source": "hosting",
+    "ignore": ["node_modules", "package.json", "package-lock.json", "auth-bundle.js", ".junoignore"]
+  }
+}

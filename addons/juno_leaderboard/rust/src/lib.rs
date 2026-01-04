@@ -2,10 +2,14 @@ use godot::prelude::*;
 use godot::classes::Os;
 use ic_agent::{Agent, Identity};
 use ic_agent::identity::AnonymousIdentity;
+use ic_agent::identity::BasicIdentity;
 use candid::{CandidType, Decode, Encode, Principal as CandidPrincipal};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use once_cell::sync::Lazy;
+use std::time::Duration;
+use ed25519_dalek::SigningKey;
+use rand_core::OsRng;
 
 // Godot initialization
 struct JunoLeaderboardExtension;
@@ -108,6 +112,9 @@ struct JunoLeaderboard {
     agent: Arc<Mutex<Option<Agent>>>,
     is_authenticated: Arc<Mutex<bool>>,
     delegation_identity: Arc<Mutex<Option<String>>>, // Store delegation as base64
+    pending_delegation: Arc<Mutex<Option<String>>>, // Delegation from HTTP callback
+    session_key: Arc<Mutex<Option<SigningKey>>>, // Session key for II authentication
+    relay_url: Arc<Mutex<String>>, // URL of relay page for II authentication
 }
 
 #[godot_api]
@@ -120,6 +127,10 @@ impl INode for JunoLeaderboard {
             agent: Arc::new(Mutex::new(None)),
             is_authenticated: Arc::new(Mutex::new(false)),
             delegation_identity: Arc::new(Mutex::new(None)),
+            pending_delegation: Arc::new(Mutex::new(None)),
+            session_key: Arc::new(Mutex::new(None)),
+            // Relay URL is auto-constructed from satellite ID, or can be set manually
+            relay_url: Arc::new(Mutex::new(String::new())),
         }
     }
 
@@ -156,37 +167,218 @@ impl JunoLeaderboard {
     }
 
     // Open browser for Internet Identity login
+    // Uses relay page + localhost HTTP server to capture delegation
     #[func]
     fn login(&mut self) {
-        let mut os = Os::singleton();
-
-        // For production, you'd construct a proper II URL with redirect
-        // For now, we'll just open II and let user copy delegation manually
-        let ii_url = "https://identity.ic0.app";
-
-        godot_print!("Opening Internet Identity login...");
-        godot_print!("After logging in, use set_delegation() to provide your delegation string");
-
-        os.shell_open(ii_url);
-
-        // Emit signal that login was initiated
+        // Emit signal immediately
         self.base_mut().emit_signal("login_initiated", &[]);
+
+        godot_print!("Starting Internet Identity authentication...");
+
+        // Generate ephemeral Ed25519 session keypair
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let verifying_key = signing_key.verifying_key();
+
+        // Store session key for later use with delegation
+        *self.session_key.lock().unwrap() = Some(signing_key);
+
+        // Convert public key to hex for URL
+        let public_key_hex = hex::encode(verifying_key.as_bytes());
+
+        godot_print!("Generated session key: {}...", &public_key_hex[..16]);
+
+        // Start HTTP server and get callback URL
+        let server_result = tiny_http::Server::http("127.0.0.1:0");
+
+        let server = match server_result {
+            Ok(s) => s,
+            Err(e) => {
+                godot_error!("Failed to start callback server: {}", e);
+                self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+                return;
+            }
+        };
+
+        let port = match server.server_addr() {
+            tiny_http::ListenAddr::IP(addr) => addr.port(),
+            tiny_http::ListenAddr::Unix(_) => {
+                godot_error!("Unix socket not supported");
+                self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+                return;
+            }
+        };
+
+        let callback_url = format!("http://localhost:{}/callback", port);
+        godot_print!("Callback server listening on {}", callback_url);
+
+        // Get or construct relay URL
+        let relay_url = {
+            let custom_relay = self.relay_url.lock().unwrap().clone();
+            if !custom_relay.is_empty() {
+                // Use custom relay URL if set
+                custom_relay
+            } else {
+                // Auto-construct from satellite ID: https://{satellite_id}.icp0.io/relay.html
+                let sat_id = self.satellite_id.lock().unwrap().clone();
+                if sat_id.is_empty() {
+                    godot_error!("Cannot construct relay URL: satellite ID not set. Call initialize() first or set custom relay URL.");
+                    self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+                    return;
+                }
+                format!("https://{}.icp0.io/relay.html", sat_id)
+            }
+        };
+
+        godot_print!("Using relay URL: {}", relay_url);
+
+        // Build relay page URL with session public key and callback
+        let auth_url = format!(
+            "{}?sessionPublicKey={}&callbackUrl={}",
+            relay_url,
+            public_key_hex,
+            urlencoding::encode(&callback_url)
+        );
+
+        // Wait for callback in background thread
+        let pending_delegation = self.pending_delegation.clone();
+
+        // Use channel to signal when server is ready
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+
+        std::thread::spawn(move || {
+            // Start recv_timeout first (non-blocking setup)
+            let timeout = Duration::from_secs(300); // 5 minutes for II flow
+
+            // Signal that we're about to start listening
+            let _ = ready_tx.send(());
+
+            match server.recv_timeout(timeout) {
+                Ok(Some(request)) => {
+                    let url_path: &str = request.url();
+
+                    // Parse delegation from query params
+                    let parsed_url = match url::Url::parse(&format!("http://localhost{}", url_path)) {
+                        Ok(u) => u,
+                        Err(e) => {
+                            let error_html = format!("<!DOCTYPE html><html><body><h1>Error</h1><p>Failed to parse URL: {}</p></body></html>", e);
+                            let _ = request.respond(tiny_http::Response::from_string(error_html));
+                            return;
+                        }
+                    };
+
+                    let delegation = match parsed_url
+                        .query_pairs()
+                        .find(|(key, _)| key == "delegation")
+                        .map(|(_, value)| value.to_string())
+                    {
+                        Some(d) => d,
+                        None => {
+                            let error_html = "<!DOCTYPE html><html><body><h1>Error</h1><p>No delegation parameter found</p></body></html>";
+                            let _ = request.respond(tiny_http::Response::from_string(error_html));
+                            return;
+                        }
+                    };
+
+                    // Store delegation for retrieval
+                    *pending_delegation.lock().unwrap() = Some(delegation);
+
+                    // Send success page to browser
+                    let success_html = "<!DOCTYPE html><html><head><title>Authentication Complete</title></head><body style=\"font-family: sans-serif; text-align: center; padding: 50px;\"><h1>Authentication Complete!</h1><p>You can close this window and return to your game.</p></body></html>";
+                    let _ = request.respond(tiny_http::Response::from_string(success_html));
+                }
+                Ok(None) => {
+                    godot_error!("Timeout waiting for authentication (5 minutes)");
+                }
+                Err(e) => {
+                    godot_error!("Error receiving callback: {}", e);
+                }
+            }
+        });
+
+        // Wait for server thread to be ready
+        if ready_rx.recv_timeout(Duration::from_secs(2)).is_err() {
+            godot_error!("Server thread failed to start");
+            self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+            return;
+        }
+
+        godot_print!("Server thread ready!");
+
+        // Give thread time to enter recv_timeout() blocking call
+        std::thread::sleep(Duration::from_millis(100));
+
+        // Open browser to relay page
+        let mut os = Os::singleton();
+        godot_print!("Opening relay page in browser...");
+        os.shell_open(&auth_url);
     }
 
     // Set delegation identity (base64-encoded delegation chain)
-    // In production, this would come from II callback or deep link
+    // Creates authenticated agent from delegation + session key
     #[func]
     fn set_delegation(&mut self, delegation_base64: GString) -> bool {
         let delegation_str = delegation_base64.to_string();
 
         // Store delegation
         *self.delegation_identity.lock().unwrap() = Some(delegation_str.clone());
+
+        godot_print!("Creating authenticated agent from delegation...");
+
+        // Get the session key we generated during login
+        let session_key_opt = self.session_key.lock().unwrap().clone();
+        let Some(session_key) = session_key_opt else {
+            godot_error!("No session key found. Call login() first.");
+            self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+            return false;
+        };
+
+        // Get satellite ID for creating new agent
+        let sat_id = self.satellite_id.lock().unwrap().clone();
+        if sat_id.is_empty() {
+            godot_error!("Satellite ID not set. Call initialize() first.");
+            self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+            return false;
+        };
+
+        // Decode delegation from base64
+        use base64::{Engine as _, engine::general_purpose};
+        let delegation_bytes = match general_purpose::STANDARD.decode(&delegation_str) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                godot_error!("Failed to decode delegation: {}", e);
+                self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+                return false;
+            }
+        };
+
+        // Parse delegation JSON
+        let delegation_json: serde_json::Value = match serde_json::from_slice(&delegation_bytes) {
+            Ok(json) => json,
+            Err(e) => {
+                godot_error!("Failed to parse delegation JSON: {}", e);
+                self.base_mut().emit_signal("login_completed", &[false.to_variant()]);
+                return false;
+            }
+        };
+
+        godot_print!("Delegation received and stored");
+
+        // TODO: Implement DelegatedIdentity support
+        // Creating a proper DelegatedIdentity requires:
+        // 1. Parsing the complex delegation chain structure from AuthClient
+        // 2. Converting ed25519-dalek SigningKey to ic-agent's key format
+        // 3. Combining the delegation chain with our session key
+        //
+        // This is complex and requires proper PKCS#8 DER encoding + delegation chain parsing
+        // For now, mark as authenticated but use the anonymous agent
+        // This means Write: Managed permissions won't work yet
+
         *self.is_authenticated.lock().unwrap() = true;
 
-        godot_print!("Delegation set - authenticated writes enabled");
-
-        // TODO: Parse delegation and create authenticated agent
-        // For now, we'll use a simplified flow
+        godot_print!("Delegation set successfully");
+        godot_print!("NOTE: Full DelegatedIdentity support not yet implemented");
+        godot_print!("      Write: Managed permissions require v0.3.0");
+        godot_print!("      For now, use Write: Public permissions for score submission");
 
         self.base_mut().emit_signal("login_completed", &[true.to_variant()]);
         true
@@ -420,12 +612,63 @@ impl JunoLeaderboard {
         GString::from(&*self.collection_name.lock().unwrap().clone())
     }
 
+    // Set custom relay URL for Internet Identity authentication
+    // By default, uses https://{satellite_id}.icp0.io/relay.html
+    // Use this to set a custom URL (e.g., GitHub Pages)
+    #[func]
+    fn set_relay_url(&mut self, url: GString) {
+        *self.relay_url.lock().unwrap() = url.to_string();
+        godot_print!("Custom relay URL set: {}", url);
+    }
+
+    // Get current relay URL (or auto-constructed one)
+    #[func]
+    fn get_relay_url(&self) -> GString {
+        let custom_relay = self.relay_url.lock().unwrap().clone();
+        if !custom_relay.is_empty() {
+            GString::from(&custom_relay)
+        } else {
+            let sat_id = self.satellite_id.lock().unwrap().clone();
+            if sat_id.is_empty() {
+                GString::from("(not set - initialize first)")
+            } else {
+                GString::from(&format!("https://{}.icp0.io/relay.html", sat_id))
+            }
+        }
+    }
+
+    // Poll for pending delegation from HTTP callback
+    // Returns the delegation string if available, empty string otherwise
+    // GDScript should call this periodically (e.g., in _process) after calling login()
+    #[func]
+    fn poll_delegation(&mut self) -> GString {
+        // Check and extract delegation
+        let delegation_opt = {
+            let mut pending = self.pending_delegation.lock().unwrap();
+            pending.take()
+        };
+
+        if let Some(delegation) = delegation_opt {
+            godot_print!("Delegation polled successfully");
+
+            // Automatically set the delegation (lock is now dropped)
+            self.set_delegation(GString::from(&delegation));
+
+            GString::from(&delegation)
+        } else {
+            GString::new()
+        }
+    }
+
     // Signals
     #[signal]
     fn login_initiated();
 
     #[signal]
     fn login_completed(success: bool);
+
+    #[signal]
+    fn delegation_received(delegation: GString);
 
     #[signal]
     fn score_submitted(success: bool);

@@ -25,7 +25,7 @@ enabled=PackedStringArray("res://addons/juno_leaderboard/plugin.cfg")
 
 [juno_leaderboard]
 
-satellite_id=""
+satellite_id="YOUR_SATELLITE_ID_HERE"
 
 [physics]
 
